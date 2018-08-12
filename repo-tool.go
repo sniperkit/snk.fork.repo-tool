@@ -1,14 +1,17 @@
+/*
+Sniperkit-Bot
+- Status: analyzed
+*/
+
 package main
 
 import (
 	"bytes"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"flag"
 	"fmt"
-	"github.com/kr/pty"
-	"gopkg.in/src-d/go-git.v4"
-	"gopkg.in/src-d/go-git.v4/plumbing"
 	"io"
 	"io/ioutil"
 	"os"
@@ -18,30 +21,34 @@ import (
 	"runtime"
 	"strings"
 	"time"
-	"errors"
+
+	"github.com/kr/pty"
+	"gopkg.in/src-d/go-git.v4"
+	"gopkg.in/src-d/go-git.v4/plumbing"
 )
 
 const baseRepo = ".repo-tool"
 const projectFile = ".repo-tool/projectRepo.json"
 
 var (
-	VERSION        = "0.52"
-	relativePath   = ""
-	gitCmd         = "/usr/bin/git"
-	hgCmd          = "/usr/bin/hg"
+	VERSION      = "0.52"
+	relativePath = ""
+	gitCmd       = "/usr/bin/git"
+	hgCmd        = "/usr/bin/hg"
 )
 
 const (
 	REPO_GIT = "git"
 	REPO_HG  = "hg"
 )
+
 /**
 Repotool file structure
 .repo-rool/projectRepo.json The project file as a json object
 .repo-tool/manifests/       The checkedout manifest
 .repo-tool/remotes          A directory of remote manifests
 
- */
+*/
 type (
 	Config struct {
 		Command string
@@ -122,7 +129,7 @@ func main() {
 	mySet.BoolVar(&config.NoSync, "no-sync", false, "Turn off sync applicable only for init")
 	mySet.IntVar(&config.Threads, "j", 1, "Number of threads to use")
 	mySet.Parse(os.Args[2:])
-	if config.Threads<0 {
+	if config.Threads < 0 {
 		config.Threads = 1
 	}
 
@@ -181,7 +188,7 @@ func repoInit(config *Config) (err error) {
 	}
 
 	// Ensure master branch is defaulted to in the config
-	if config.Branch=="" {
+	if config.Branch == "" {
 		config.Branch = "master"
 	}
 
@@ -366,57 +373,59 @@ func repoSync(existingRepo *Repo, config *Config) (err error) {
 		}
 	}
 	close(jobs)
-	consumerErrorList := <- consumer
-	if len(consumerErrorList)>0 {
+	consumerErrorList := <-consumer
+	if len(consumerErrorList) > 0 {
 		for _, ce := range consumerErrorList {
 			e := ce.([]interface{})
-			project,output,err := e[0].(*Project),e[1].(string),e[2]
+			project, output, err := e[0].(*Project), e[1].(string), e[2]
 			fmt.Println("Error Project ", project.Name, project.BranchRevision, project.Path)
 			fmt.Println("Output ", output)
-			fmt.Println("Error " , err)
+			fmt.Println("Error ", err)
 		}
 		return errors.New("Checkout errors occurred")
 	}
 
 	return
 }
+
 const (
 	WORK_CHECKOUT = iota
 	WORK_STATUS
 )
-func createProjectWorkers(amount int, workType int) (jobs chan *Project,  errorConsumer chan []interface{}) {
+
+func createProjectWorkers(amount int, workType int) (jobs chan *Project, errorConsumer chan []interface{}) {
 	jobs = make(chan *Project, 100)
 	errorConsumer = make(chan []interface{}, 100)
 	errorOutput := make(chan []interface{}, 100)
-	for w:=1; w<= amount; w++ {
-		go projectWorker(w, workType,jobs,errorOutput)
+	for w := 1; w <= amount; w++ {
+		go projectWorker(w, workType, jobs, errorOutput)
 	}
 	// Start the consumer channel as well
 	go checkoutProjectErrorConsumer(errorOutput, errorConsumer)
 	return
 }
-func checkoutProjectErrorConsumer( errorOutput chan []interface{}, errorConsumer chan []interface{}) {
+func checkoutProjectErrorConsumer(errorOutput chan []interface{}, errorConsumer chan []interface{}) {
 	errorList := []interface{}{}
 	for e := range errorOutput {
-		errorList = append(errorList,e)
+		errorList = append(errorList, e)
 	}
 	println("Returning error list")
 	errorConsumer <- errorList
 }
 func projectWorker(id, workType int, jobs chan *Project, errorOutput chan []interface{}) {
 	for job := range jobs {
-		fmt.Println("Worker",id, "project", job.Name, "workType", workType)
-		switch (workType) {
+		fmt.Println("Worker", id, "project", job.Name, "workType", workType)
+		switch workType {
 		case WORK_CHECKOUT:
-			if output,err := job.checkout();err!=nil {
-				errorOutput <- []interface{}{job,output, err}
+			if output, err := job.checkout(); err != nil {
+				errorOutput <- []interface{}{job, output, err}
 			}
 		case WORK_STATUS:
-			if output,err := job.status();err!=nil {
-				errorOutput <- []interface{}{job,output, err}
+			if output, err := job.status(); err != nil {
+				errorOutput <- []interface{}{job, output, err}
 			}
 		}
-		fmt.Println("Completed Worker",id, "project", job.Name, "workType", workType)
+		fmt.Println("Completed Worker", id, "project", job.Name, "workType", workType)
 	}
 	close(errorOutput)
 }
@@ -433,14 +442,14 @@ func repoStatus(config *Config) (err error) {
 		jobs <- project
 	}
 	close(jobs)
-	consumerErrorList := <- consumer
-	if len(consumerErrorList)>0 {
+	consumerErrorList := <-consumer
+	if len(consumerErrorList) > 0 {
 		for _, ce := range consumerErrorList {
 			e := ce.([]interface{})
-			project,output,err := e[0].(*Project),e[1].(string),e[2]
+			project, output, err := e[0].(*Project), e[1].(string), e[2]
 			fmt.Println("Unclean Project ", project.Name, project.BranchRevision, project.Path)
 			fmt.Println("Output ", output)
-			fmt.Println("Error " , err)
+			fmt.Println("Error ", err)
 		}
 	}
 
@@ -460,7 +469,7 @@ func (p *Project) checkout() (output string, err error) {
 				}
 				if out, e := hgClone(p.Url, filepath.Join(relativePath, p.SourcePath), args); e != nil {
 					fmt.Printf("Project %s Clone (CLONE) Error \n%s\n%v\n\n", p.Name, out, e)
-					return out,e
+					return out, e
 				} else {
 					fmt.Printf("Project %s Clone (END) \n%s\n\n", p.Name, out)
 				}
@@ -470,7 +479,7 @@ func (p *Project) checkout() (output string, err error) {
 				out, e := hgSync(filepath.Join(relativePath, p.SourcePath), p.RemoteKey, p.Revision, nil)
 				if e != nil {
 					fmt.Printf("Project %s Synchronize (PULL error) \n%s\n%v\n\n", p.Name, out, e)
-					return out,e
+					return out, e
 				}
 				fmt.Printf("Project %s Synchronize (PULL) \n%s\n\n", p.Name, out)
 
@@ -489,7 +498,7 @@ func (p *Project) checkout() (output string, err error) {
 
 			if out, e := gitClone(p.Url, filepath.Join(relativePath, p.SourcePath), "", args); e != nil {
 				fmt.Printf("Project %s Clone (CLONE) Error \n%s\n%v\n\n", p.Name, out, e)
-				return out,e
+				return out, e
 			} else {
 				fmt.Printf("Project %s Clone (END) \n%s\n\n", p.Name, out)
 			}
@@ -498,7 +507,7 @@ func (p *Project) checkout() (output string, err error) {
 			out, e := gitSync(filepath.Join(relativePath, p.SourcePath), p.RemoteKey, p.Revision, nil)
 			if e != nil {
 				fmt.Printf("Project %s Synchronize (PULL error) \n%s\n%v\n\n", p.Name, out, e)
-				return out,e
+				return out, e
 			}
 			fmt.Printf("Project %s Synchronize (PULL) \n%s\n\n", p.Name, out)
 		}
@@ -661,9 +670,9 @@ func (p *Project) InGroupList(references []*RepoReferences, groupList []string) 
 	}
 	if !result {
 		// Examine the RepoReferences to see if the project exists in them
-		for _,reference := range references {
-			for _,project := range reference.RemoteRepo.ProjectMap {
-				result = project.InGroupList(nil,groupList)
+		for _, reference := range references {
+			for _, project := range reference.RemoteRepo.ProjectMap {
+				result = project.InGroupList(nil, groupList)
 				if result {
 					break
 				}
@@ -804,7 +813,7 @@ func gitSync(source, remote, revision string, args []string) (out string, err er
 		matches := branchCatcher.FindAllStringSubmatch(out, -1)
 		//println("checking \n",out,"\nbranch",branch,"matches",len(matches),"\n",out[:1])
 		// If no upstream version then we cannot track it
-		if len(matches)>0 {
+		if len(matches) > 0 {
 			branchRevision := strings.TrimSpace(strings.Split(matches[0][2], ":")[0])
 			if out[:1] == "*" {
 				currentBranch = branch
@@ -885,7 +894,7 @@ func stripCtlAndExtFromBytes(str string) string {
 	var bl int
 	for i := 0; i < len(str); i++ {
 		c := str[i]
-		if c == 27 && len(str)>i+2 {
+		if c == 27 && len(str) > i+2 {
 			if str[i+2] == 51 {
 				i += 2
 			}
